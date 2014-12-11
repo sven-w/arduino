@@ -4,7 +4,7 @@
 #include <Wire.h>
 #include <EEPROM.h>
 
-const byte EEPROM_ADD = 0x57;  //0xAE upper 7bit, for eeprom read write
+const byte SPD_I2C_ADD = 0x57;  //0xAE upper 7bit, for eeprom read write
 const byte SET_PAGE_ADD = 0x37; //0x6E upper 7bit, for select eeprom page
 const int led = 13;  
 
@@ -27,7 +27,6 @@ byte spd[16][16] = {
   {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x69, 0xf9}
 };
 
-
 void setup()
 {
   Wire.begin(); // join i2c bus (address optional for master)
@@ -37,15 +36,15 @@ void setup()
 
 void loop()
 {
-  delay(1000);
+  delay(500);
   /*---------------get serial no. from EEPROM--------------------*/
   byte serialno[6] = {0x14, 0x42, 0x4a, 0, 0, 0};
   serialno[3] = EEPROM.read(1);
-  delay(500);
+  delay(10);
   serialno[4] = EEPROM.read(2);
-  delay(500);
+  delay(10);
   serialno[5] = EEPROM.read(3);
-  delay(500);
+  delay(10);
   
   /*-----calculate crc for Base config----------------------------*/
   for(unsigned int y = 0; y <= 5; y++)
@@ -56,76 +55,85 @@ void loop()
   spd[7][15] = (byte)(data16 >> 8);
   
   /*---------------write data to the first page of SPD------------*/
-  Serial.print("writing SPD....\n");
+  Serial.print("writing spd 1st half.\n");
   for(byte i = 0; i <= 15; i++){
-    Wire.beginTransmission(EEPROM_ADD); 
+    Wire.beginTransmission(SPD_I2C_ADD); 
     Wire.write( 16 * i );
-    for( byte j = 0; j <= 15; j++){
+    for( byte j = 0; j <= 15; j++)
       Wire.write(spd[i][j]);  // sends one byte  
-//      if ( spd[i][j] <= 15 ) Serial.print('0');
-//      Serial.print(spd[i][j], HEX);    
-//      Serial.print('\t');  
-    }
     Wire.endTransmission();    // stop transmitting
-//    Serial.print('\n');
     delay(5);         //wait 5ms before next start
   }
-  Serial.print("writing SPD done...\n");
   
-/*----read from the first page of SPD, compare with write value------*/
-  Serial.print("validating first half of SPD content...\n");
-  int error = 0;  // 1 indicate an error
-  byte spd_read[16][16];  //read out spd for validation
+  /*----read from the first page of SPD, compare with write value------*/
+  Serial.print("validating 1st half.\n");
+  byte temp;
   for(unsigned int a= 0; a< 16; a++){
     for(unsigned int b= 0; b< 16; b++){
-      spd_read[a][b] = readEEPROM((int) EEPROM_ADD, 16*a+b);
-      if (spd_read[a][b] != spd[a][b]) error = 1;
+      temp = readi2c((int) SPD_I2C_ADD, 16*a+b);
+      if (temp != spd[a][b]){
+        Serial.print("spd 1st half programming fail!!");
+        led_blinking();
+      }
     }
   }
-  Serial.print("validating done.\n");
   
 /*--------------------first half done, now 2nd half------------------*/
-  Serial.print("programming serial no. and 2nd half SPD...\n");
+  Serial.print("writing spd 2nd half.\n");
   
   /* set page 1*/
   Wire.beginTransmission(SET_PAGE_ADD);
   Wire.write(0); // maybe not needed
   Wire.endTransmission();
   
-  /* program all bytes to 0. */
+  /* initialize the 2nd half of spd */
+  byte spd_2nd[16][16] = {};
+  for(unsigned int i = 0; i <= 15; i++)
+    for(unsigned int j = 0; j <= 15; j++)
+      spd_2nd[i][j] = 0;
+  for(unsigned int i = 0; i <= 5; i++)
+    spd_2nd[4][3+i] = serialno[i];
+  
+  /* program 2nd half */
   for(byte i = 0; i <= 15; i++){
-    Wire.beginTransmission(EEPROM_ADD);
+    Wire.beginTransmission(SPD_I2C_ADD);
     Wire.write( 16 * i );
     for( byte j = 0; j <= 15; j++)
-      Wire.write(0);
+      Wire.write(spd_2nd[i][j]);
     Wire.endTransmission();
     delay(5);         //wait 5ms before next start
   }
   
-  /* program manufacturing date and serial no. */
-  Wire.beginTransmission(EEPROM_ADD);
-  Wire.write(0x43);
-  for(unsigned int x = 0; x < 6; x++){
-    Wire.write(serialno[x]);
-    Serial.print(serialno[x], HEX);
+  /* validate 2nd half spd*/
+  Serial.print("validating spd 2nd half\n");
+  byte val;
+  for(unsigned int i = 0; i <=5; i++){
+    Serial.print(serialno[i], HEX);
+    val = readi2c((int)SPD_I2C_ADD, 0x43 + i);
+    if (val != serialno[i] )
+      if (val == (serialno[i] + 1)){
+        Serial.print("this board has been programmed, please step to next one\n");
+        led_blinking();
+      }
+      else{
+        Serial.print("spd 2nd half validating fail!!\n");
+        led_blinking();
+      }
   }
-  Wire.endTransmission();
   Serial.print('\n');
   
+  /*------------------------done looping----------*/
+  digitalWrite(led, HIGH);
   /* increase EEPROM serial no. */
   EEPROM.write(3, serialno[5] + 1);
-//  Serial.print(serialno[5]+1, HEX);
   Serial.print("\nPASS!\n");
-/*------------------------error message and done looping----------*/
-  if (error)
-    led_blinking();
-  else
-    led_light();
   while (true){;}
 }
+
+
 /*--------------------------end of loop------------------------------------------------*/
 /*-------------------------------------------------------------------------------------*/
-byte readEEPROM(int deviceaddress, unsigned int byte_address ) 
+byte readi2c(int deviceaddress, unsigned int byte_address)
 {
   byte rdata = 0xFF;
   Wire.beginTransmission(deviceaddress);
@@ -134,11 +142,6 @@ byte readEEPROM(int deviceaddress, unsigned int byte_address )
   Wire.requestFrom(deviceaddress,1);
   if (Wire.available()) rdata = Wire.read();
   return rdata;
-}
-
-void led_light()
-{
-   digitalWrite(led, HIGH);
 }
 
 void led_blinking()
@@ -166,3 +169,5 @@ int crc16 (byte *ptr, int count)
   }
   return (crc & 0xFFFF);
 }
+
+/* EOF */
