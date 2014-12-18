@@ -4,6 +4,7 @@
 #wistron sn standard is like: "555M009D01G450000028J0SA", i pick "0028"
 #usage: python programming.py com_port_number
 #plug arduino before executing programming.py
+#test with VSPE and putty for serial communication
 
 import serial
 import time
