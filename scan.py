@@ -16,8 +16,8 @@ usage: under scripts's folder, open cmd, type: python scan.py comx
 	while True:
 		t = time.localtime()
 		print(t.tm_year, '/', t.tm_mon, '/', t.tm_mday, ' ',
-		"{:>2}".format(t.tm_hour), ':', "{:>2}".format(t.tm_min),
-		':', "{:>2}".format(t.tm_sec), end = ' ', sep = '')
+		str(t.tm_hour).zfill(2), ':', str(t.tm_min).zfill(2),
+		':', str(t.tm_sec).zfill(2), end = ' ', sep = '')
 		
 		sn = input(" scan SN: ")
 		sn_send = bytes.fromhex(sn[16:20])
